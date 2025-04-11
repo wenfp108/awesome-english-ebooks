@@ -1,61 +1,84 @@
-name: 同步上游仓库
-
+name: 自动同步更新上游仓库
 on:
   schedule:
-    # 每周六0点运行（UTC时间是每周五16:00，对应北京时间24:00，也就是周六00:00）
-    - cron: '0 16 * * 5'
-  # 允许手动触发工作流
-  workflow_dispatch:
-
+    - cron: '0 8 */2 * *' # 每两天 北京时间 0 点同步
+  workflow_dispatch: # 允许手动触发
 jobs:
   sync:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write  # 为 GITHUB_TOKEN 授予写入权限
+
     steps:
-      # 检出当前仓库代码（使用浅克隆减少下载量）
-      - name: 检出当前仓库
-        uses: actions/checkout@v3
+      - name: Checkout 代码
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-      
-      # 添加上游仓库并只获取最新提交
+          fetch-depth: 0
+          token: ${{ github.token }}
+
       - name: 添加上游仓库
+        run: git remote add upstream https://github.com/hehonghui/awesome-english-ebooks.git  # 关键地址，记得修改
+
+      - name: 获取上游更新
+        run: git fetch upstream
+
+      - name: 检测上游默认分支
+        id: upstream-branch
         run: |
-          git remote add upstream https://github.com/hehonghui/awesome-english-ebooks.git
-          git fetch upstream --depth=1
-      
-      # 备份GitHub Action文件
-      - name: 备份GitHub Action文件
+          DEFAULT_BRANCH=$(git remote show upstream | grep "HEAD branch" | sed 's/.*: //')
+          echo "default_branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: 检测同步文件（如 sync.yml 或 改名后的文件）
+        id: sync-file-detection
         run: |
-          mkdir -p /tmp/github-actions-backup
-          if [ -d ".github/workflows" ]; then
-            cp -r .github/workflows /tmp/github-actions-backup/
+          # 查找 .github/workflows 中的文件，检查文件内容
+          sync_file=$(grep -l '自动同步更新上游仓库的文件' .github/workflows/* | head -n 1)
+          
+          if [ -z "$sync_file" ]; then
+            echo "没有找到用于同步的工作流文件" >&2
+            exit 1
+          else
+            echo "检测到同步工作流文件: $sync_file"
+            echo "sync_file=$sync_file" >> $GITHUB_OUTPUT
           fi
-      
-      # 合并上游仓库的更改
-      - name: 合并上游仓库的更改
+
+      - name: 合并上游更改（保留自定义同步文件）
         run: |
-          # 确保我们在主分支上
-          git checkout master || git checkout main
-          
-          # 合并上游仓库的更改
-          git merge upstream/master || git merge upstream/main
-          
-          # 如果有冲突，以上游仓库为准
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "GitHub Actions"
-      
-      # 恢复GitHub Action文件
-      - name: 恢复GitHub Action文件
-        run: |
-          if [ -d "/tmp/github-actions-backup/workflows" ]; then
-            mkdir -p .github/workflows
-            cp -r /tmp/github-actions-backup/workflows/* .github/workflows/
-            git add .github/workflows
-            git commit -m "恢复GitHub Action文件" || echo "没有需要恢复的文件"
-          fi
+          git config --global user.email "actions@github.com"
+
+          # 创建新分支进行操作
+          git checkout -b temp_sync_branch
+
+          # 更新除了工作流文件外的所有文件
+          git checkout upstream/${{ steps.upstream-branch.outputs.default_branch }} -- .
+          git reset HEAD .github/workflows
           
-      # 推送更改到你的仓库
-      - name: 推送更改到仓库
+          # 获取同步文件路径
+          sync_file_path=${{ steps.sync-file-detection.outputs.sync_file }}
+          
+          # 删除上游的工作流文件，除了自定义的同步文件
+          find .github/workflows -type f ! -path "$sync_file_path" -exec rm {} \;
+
+          # 保留自定义的同步文件
+          git checkout -- "$sync_file_path"
+
+          # 提交更改
+          git add .
+          git diff-index --quiet HEAD || git commit -m "同步上游更改"
+
+          # 切回原分支
+          git checkout ${{ github.ref_name }}
+
+          # 合并更改
+          git merge temp_sync_branch --no-ff -m "合并上游更改"
+
+      - name: 获取当前仓库默认分支
+        id: local-branch
         run: |
-          git push origin
+          DEFAULT_BRANCH=$(git remote show origin | grep "HEAD branch" | sed 's/.*: //')
+          echo "default_branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: 推送更新
+        run: |
+          git push origin ${{ steps.local-branch.outputs.default_branch }}
