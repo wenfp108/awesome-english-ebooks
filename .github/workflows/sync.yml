@@ -1,7 +1,7 @@
 name: 自动同步更新上游仓库
 on:
   schedule:
-    - cron: '0 8 */2 * *' # 每两天 北京时间 0 点同步
+    - cron: '0 8 */5 * *' # 每两天 北京时间 0 点同步
   workflow_dispatch: # 允许手动触发
 jobs:
   sync:
