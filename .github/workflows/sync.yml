@@ -65,13 +65,13 @@ jobs:
 
           # 提交更改
           git add .
-          git diff-index --quiet HEAD || git commit -m "同步上游更改"
+          git diff-index --quiet HEAD || git commit -m "同步上游更改: $LATEST_COMMIT"
 
           # 切回原分支
           git checkout ${{ github.ref_name }}
 
           # 合并更改
-          git merge temp_sync_branch --no-ff -m "合并上游更改"
+          git merge temp_sync_branch --no-ff -m "合并上游更改": $LATEST_COMMIT"
 
       - name: 获取当前仓库默认分支
         id: local-branch
